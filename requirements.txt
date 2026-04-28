@@ -1,0 +1,6 @@
+pynput
+mido
+python-rtmidi
+pyobjc-framework-Cocoa
+websockets
+aiohttp

@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mouse Collaboration</title>
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+      color: #eee;
+      font-family: Arial, sans-serif;
+    }
+    .topbar {
+      padding: 10px 14px;
+      border-bottom: 1px solid #333;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .badge {
+      padding: 4px 8px;
+      border: 1px solid #444;
+      border-radius: 6px;
+      font-size: 13px;
+      background: #1b1b1b;
+    }
+    #stage {
+      position: relative;
+      width: 100vw;
+      height: calc(100vh - 56px);
+      overflow: hidden;
+      cursor: crosshair;
+      background:
+        radial-gradient(circle at 25% 25%, #1d2030 0%, #111 35%),
+        radial-gradient(circle at 75% 75%, #231a2f 0%, transparent 35%);
+    }
+    .cursor {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      border: 2px solid #fff;
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.15);
+    }
+    .label {
+      position: absolute;
+      transform: translate(10px, -18px);
+      font-size: 11px;
+      white-space: nowrap;
+      color: #f0f0f0;
+      text-shadow: 0 1px 2px #000;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="badge" id="status">Connecting...</div>
+    <div class="badge" id="roomInfo">Room: -</div>
+    <div class="badge" id="userInfo">User: -</div>
+    <div class="badge" id="channelInfo">Channel: -</div>
+    <div class="badge" id="countInfo">Participants: 0</div>
+  </div>
+  <div id="stage"></div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const room = (params.get("room") || "main").trim();
+    const user = (params.get("user") || `user_${Math.floor(Math.random() * 9999)}`).trim();
+    const wsProto = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${wsProto}://${location.host}/ws`);
+
+    const stage = document.getElementById("stage");
+    const statusEl = document.getElementById("status");
+    const roomEl = document.getElementById("roomInfo");
+    const userEl = document.getElementById("userInfo");
+    const channelEl = document.getElementById("channelInfo");
+    const countEl = document.getElementById("countInfo");
+
+    roomEl.textContent = `Room: ${room}`;
+    userEl.textContent = `User: ${user}`;
+
+    let channel = null;
+    let lastX = null;
+    let lastY = null;
+    let lastT = null;
+    let speedSmooth = 0;
+    let scrollSmooth = 0;
+    let clickValue = 0;
+    let xMidi = 0;
+    let yMidi = 0;
+
+    const dots = new Map();
+    const palette = [
+      "#ff7b7b", "#ffd166", "#06d6a0", "#4cc9f0",
+      "#b388eb", "#f72585", "#90be6d", "#f8961e"
+    ];
+
+    function clampMidi(v) {
+      return Math.max(0, Math.min(127, Math.round(v)));
+    }
+
+    function normToMidi(value, maxValue) {
+      if (maxValue <= 0) return 0;
+      return clampMidi((value / maxValue) * 127);
+    }
+
+    function ensureDot(userId, color) {
+      if (dots.has(userId)) return dots.get(userId);
+      const dot = document.createElement("div");
+      dot.className = "cursor";
+      dot.style.background = color;
+      const label = document.createElement("div");
+      label.className = "label";
+      label.textContent = userId;
+      dot.appendChild(label);
+      stage.appendChild(dot);
+      dots.set(userId, dot);
+      return dot;
+    }
+
+    function drawParticipants(participants) {
+      const ids = new Set(Object.keys(participants));
+      dots.forEach((dot, id) => {
+        if (!ids.has(id)) {
+          dot.remove();
+          dots.delete(id);
+        }
+      });
+      let i = 0;
+      Object.entries(participants).forEach(([id, p]) => {
+        const color = palette[i % palette.length];
+        const dot = ensureDot(id, color);
+        const xPx = (p.x / 127) * stage.clientWidth;
+        const yPx = (p.y / 127) * stage.clientHeight;
+        dot.style.left = `${xPx}px`;
+        dot.style.top = `${yPx}px`;
+        dot.style.opacity = p.click > 0 ? "1.0" : "0.8";
+        dot.firstChild.textContent = `${id} (ch ${p.channel})`;
+        i += 1;
+      });
+      countEl.textContent = `Participants: ${Object.keys(participants).length}`;
+    }
+
+    stage.addEventListener("mousemove", (ev) => {
+      const rect = stage.getBoundingClientRect();
+      const x = ev.clientX - rect.left;
+      const y = ev.clientY - rect.top;
+      xMidi = normToMidi(x, rect.width);
+      yMidi = normToMidi(y, rect.height);
+      const now = performance.now();
+      if (lastX !== null && lastY !== null && lastT !== null) {
+        const dx = x - lastX;
+        const dy = y - lastY;
+        const dt = Math.max((now - lastT) / 1000, 0.000001);
+        const speed = Math.sqrt(dx * dx + dy * dy) / dt;
+        speedSmooth = 0.25 * speed + 0.75 * speedSmooth;
+      }
+      lastX = x;
+      lastY = y;
+      lastT = now;
+    });
+
+    stage.addEventListener("mousedown", () => { clickValue = 127; });
+    stage.addEventListener("mouseup", () => { clickValue = 0; });
+    stage.addEventListener("mouseleave", () => { clickValue = 0; });
+    stage.addEventListener("wheel", (ev) => {
+      scrollSmooth = 0.35 * Math.min(127, Math.abs(ev.deltaY) * 0.12) + 0.65 * scrollSmooth;
+    }, { passive: true });
+
+    ws.addEventListener("open", () => {
+      statusEl.textContent = "Connected";
+      ws.send(JSON.stringify({ type: "hello", room, user_id: user }));
+    });
+
+    ws.addEventListener("close", () => {
+      statusEl.textContent = "Disconnected";
+    });
+
+    ws.addEventListener("message", (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === "joined") {
+        channel = msg.channel;
+        channelEl.textContent = `Channel: ${channel}`;
+      } else if (msg.type === "state") {
+        drawParticipants(msg.participants || {});
+      } else if (msg.type === "error") {
+        statusEl.textContent = `Error: ${msg.message}`;
+      }
+    });
+
+    setInterval(() => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const speedMidi = clampMidi((Math.min(speedSmooth, 2600) / 2600) * 127);
+      const scrollMidi = clampMidi(scrollSmooth);
+      ws.send(JSON.stringify({
+        type: "metrics",
+        values: {
+          speed: speedMidi,
+          x: xMidi,
+          y: yMidi,
+          click: clickValue,
+          scroll: scrollMidi
+        }
+      }));
+    }, 80);
+  </script>
+</body>
+</html>
