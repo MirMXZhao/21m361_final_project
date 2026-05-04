@@ -26,15 +26,68 @@
       font-size: 13px;
       background: #1b1b1b;
     }
+    .layout {
+      display: flex;
+      height: calc(100vh - 56px);
+      min-height: 0;
+    }
     #stage {
       position: relative;
-      width: 100vw;
-      height: calc(100vh - 56px);
+      flex: 1;
+      min-width: 0;
+      height: 100%;
       overflow: hidden;
       cursor: crosshair;
       background:
         radial-gradient(circle at 25% 25%, #1d2030 0%, #111 35%),
         radial-gradient(circle at 75% 75%, #231a2f 0%, transparent 35%);
+    }
+    .controls-panel {
+      width: min(300px, 38vw);
+      flex-shrink: 0;
+      box-sizing: border-box;
+      border-left: 1px solid #333;
+      padding: 14px 16px 20px;
+      overflow-y: auto;
+      font-size: 13px;
+      line-height: 1.45;
+      background: #161616;
+      color: #ddd;
+    }
+    .controls-panel h2 {
+      margin: 0 0 12px;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: #fff;
+    }
+    .user-block {
+      margin-bottom: 16px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid #2a2a2a;
+    }
+    .user-block:last-child {
+      margin-bottom: 0;
+      padding-bottom: 0;
+      border-bottom: none;
+    }
+    .user-block h3 {
+      margin: 0 0 6px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .user-block .role {
+      margin: 0 0 8px;
+      font-size: 12px;
+      color: #9ab;
+    }
+    .user-block ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+    .user-block li {
+      margin-bottom: 4px;
     }
     .cursor {
       position: absolute;
@@ -63,7 +116,46 @@
     <div class="badge" id="channelInfo">Channel: -</div>
     <div class="badge" id="countInfo">Participants: 0</div>
   </div>
-  <div id="stage"></div>
+  <div class="layout">
+    <div id="stage"></div>
+    <aside class="controls-panel" aria-label="MIDI control assignments per user">
+      <h2>Control map</h2>
+      <div class="user-block">
+        <h3>User 1</h3>
+        <p class="role">Melody</p>
+        <ul>
+          <li>Velocity: pitch</li>
+          <li>X axis: cutoff frequency</li>
+          <li>Y axis: downsampling for bit crusher</li>
+        </ul>
+      </div>
+      <div class="user-block">
+        <h3>User 2</h3>
+        <p class="role">Chords</p>
+        <ul>
+          <li>X axis: pan</li>
+          <li>Y axis: cutoff frequency</li>
+        </ul>
+      </div>
+      <div class="user-block">
+        <h3>User 3</h3>
+        <p class="role">Drums</p>
+        <ul>
+          <li>X axis: rate of arpeggiation</li>
+          <li>Y axis: volume</li>
+          <li>Click: cymbal</li>
+        </ul>
+      </div>
+      <div class="user-block">
+        <h3>User 4</h3>
+        <p class="role">Melody (lower than User 1)</p>
+        <ul>
+          <li>Velocity: pitch</li>
+          <li>X axis: wetness echo degree</li>
+        </ul>
+      </div>
+    </aside>
+  </div>
 
   <script>
     const params = new URLSearchParams(window.location.search);

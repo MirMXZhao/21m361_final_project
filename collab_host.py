@@ -33,12 +33,10 @@ class CollaborativeMidiBridge:
     def __init__(
         self,
         midi_port: str,
-        default_channels: list[int],
         explicit_assignments: dict[str, int],
         mapping: MidiMapping,
     ) -> None:
         self.midi_port_name = midi_port
-        self.default_channels = default_channels
         self.explicit_assignments = explicit_assignments
         self.mapping = mapping
 
@@ -55,16 +53,27 @@ class CollaborativeMidiBridge:
             if user_id in self.channel_by_user:
                 return self.channel_by_user[user_id]
 
+            join_index = len(self.channel_by_user)
             if user_id in self.explicit_assignments:
                 channel = self.explicit_assignments[user_id]
+                if channel in self.used_channels:
+                    raise RuntimeError(
+                        f"MIDI channel {channel + 1} is already taken; "
+                        f"fix --user-channel for '{user_id}' or remove conflicting assignment."
+                    )
             else:
-                channel = next((ch for ch in self.default_channels if ch not in self.used_channels), None)
-                if channel is None:
-                    raise RuntimeError("No available MIDI channels left for new users.")
+                channel = join_index
+                while channel <= 15 and channel in self.used_channels:
+                    channel += 1
+                if channel > 15:
+                    raise RuntimeError("No available MIDI channels left for new users (max 16).")
 
             self.channel_by_user[user_id] = channel
             self.used_channels.add(channel)
-            print(f"Assigned user '{user_id}' -> MIDI channel {channel + 1}")
+            print(
+                f"Assigned user '{user_id}' -> MIDI channel {channel + 1} "
+                f"(join order {join_index + 1})"
+            )
             return channel
 
     def send_metrics(self, user_id: str, values: dict[str, int]) -> None:
@@ -140,12 +149,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", type=str, default="0.0.0.0", help="WebSocket bind host.")
     parser.add_argument("--port", type=int, default=8765, help="WebSocket bind port.")
     parser.add_argument(
-        "--channels",
-        type=str,
-        default="1,2,3,4,5,6,7,8",
-        help="Comma-separated default channels for auto-assignment (1..16).",
-    )
-    parser.add_argument(
         "--user-channel",
         action="append",
         default=[],
@@ -159,29 +162,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def parse_channel_list(text: str) -> list[int]:
-    channels: list[int] = []
-    for token in text.split(","):
-        token = token.strip()
-        if not token:
-            continue
-        channel_one_based = int(token)
-        if not 1 <= channel_one_based <= 16:
-            raise ValueError("Channels must be in range 1..16.")
-        channels.append(channel_one_based - 1)
-    deduped = list(dict.fromkeys(channels))
-    if not deduped:
-        raise ValueError("At least one default channel is required.")
-    return deduped
-
-
 async def run_server(args: argparse.Namespace) -> int:
     if args.list_ports:
         for name in mido.get_output_names():
             print(name)
         return 0
 
-    default_channels = parse_channel_list(args.channels)
     assignments = parse_user_channel_pairs(args.user_channel)
     mapping = MidiMapping(
         speed_cc=args.cc_speed,
@@ -194,7 +180,6 @@ async def run_server(args: argparse.Namespace) -> int:
     try:
         bridge = CollaborativeMidiBridge(
             midi_port=args.midi_port,
-            default_channels=default_channels,
             explicit_assignments=assignments,
             mapping=mapping,
         )
@@ -205,7 +190,7 @@ async def run_server(args: argparse.Namespace) -> int:
 
     print(f"Host bridge listening on ws://{args.host}:{args.port}")
     print(f"MIDI out: {args.midi_port}")
-    print(f"Default channel pool: {[ch + 1 for ch in default_channels]}")
+    print("Auto-assign: 1st new user -> MIDI channel 1, 2nd -> channel 2, ... (per session).")
     if assignments:
         friendly = {k: v + 1 for k, v in assignments.items()}
         print(f"Explicit user channels: {friendly}")

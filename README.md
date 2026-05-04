@@ -103,8 +103,9 @@ python collab_host.py \
   --user-channel carol:3
 ```
 
-If not explicitly assigned, users are auto-assigned from `--channels`
-(default `1,2,3,4,5,6,7,8`).
+If not explicitly assigned, the host assigns MIDI channels by **join order**:
+the first new user in that session gets channel 1, the second gets channel 2,
+and so on (up to 16). The same `user_id` reconnecting keeps its previous channel.
 
 ### Start participant client (on each user's machine)
 
@@ -136,7 +137,7 @@ http://<HOST_IP>:8080/?room=ensemble&user=alice
 ```
 
 - `room`: collaboration room name (participants in same room see each other)
-- `user`: participant ID (used for MIDI channel assignment)
+- `user`: participant ID (stable name for that performer; channel is by **join order within that room** unless you use `--user-channel`)
 
 When users open the link, they get:
 

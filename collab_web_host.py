@@ -49,14 +49,12 @@ class SessionServer:
     def __init__(
         self,
         midi_port: str,
-        default_channels: list[int],
         explicit_assignments: dict[str, int],
         mapping: MidiMapping,
         debug_print_ms: int,
         state_broadcast_ms: int,
     ) -> None:
         self.mapping = mapping
-        self.default_channels = default_channels
         self.explicit_assignments = explicit_assignments
         self.rooms: dict[str, RoomState] = {}
         self.out_port = mido.open_output(midi_port)
@@ -71,23 +69,35 @@ class SessionServer:
             self.rooms[room_id] = RoomState()
         return self.rooms[room_id]
 
-    def assign_channel(self, room: RoomState, user_id: str) -> int:
+    def assign_channel(self, room_id: str, room: RoomState, user_id: str) -> int:
         if user_id in room.participants:
             return room.participants[user_id].channel
+        join_index = len(room.participants)
         if user_id in self.explicit_assignments:
             channel = self.explicit_assignments[user_id]
+            if channel in room.used_channels:
+                raise RuntimeError(
+                    f"MIDI channel {channel + 1} is already taken in this room; "
+                    f"fix --user-channel for '{user_id}' or remove conflicting assignment."
+                )
         else:
-            channel = next((ch for ch in self.default_channels if ch not in room.used_channels), None)
-            if channel is None:
-                raise RuntimeError("No available MIDI channels left for this room.")
+            channel = join_index
+            while channel <= 15 and channel in room.used_channels:
+                channel += 1
+            if channel > 15:
+                raise RuntimeError("No available MIDI channels left for this room (max 16).")
         room.used_channels.add(channel)
         room.participants[user_id] = ParticipantState(user_id=user_id, channel=channel)
+        print(
+            f"room={room_id!r} user={user_id!r} -> MIDI channel {channel + 1} "
+            f"(join order {join_index + 1})"
+        )
         return channel
 
     def update_metrics(self, room_id: str, user_id: str, values: dict[str, Any]) -> None:
         room = self.get_room(room_id)
         if user_id not in room.participants:
-            self.assign_channel(room, user_id)
+            self.assign_channel(room_id, room, user_id)
         participant = room.participants[user_id]
         sanitized = {
             "x": max(0, min(127, int(values.get("x", 0)))),
@@ -176,22 +186,6 @@ class SessionServer:
             await asyncio.sleep(self.state_broadcast_ms / 1000.0)
 
 
-def parse_channel_list(text: str) -> list[int]:
-    channels: list[int] = []
-    for token in text.split(","):
-        token = token.strip()
-        if not token:
-            continue
-        value = int(token)
-        if not 1 <= value <= 16:
-            raise ValueError("Channels must be in range 1..16.")
-        channels.append(value - 1)
-    deduped = list(dict.fromkeys(channels))
-    if not deduped:
-        raise ValueError("At least one default channel is required.")
-    return deduped
-
-
 def parse_user_channel_pairs(pairs: list[str]) -> dict[str, int]:
     assignments: dict[str, int] = {}
     for pair in pairs:
@@ -233,7 +227,11 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                         await ws.send_json({"type": "error", "message": "Missing user_id"})
                         continue
                     room = server.get_room(room_id)
-                    channel = server.assign_channel(room, user_id)
+                    try:
+                        channel = server.assign_channel(room_id, room, user_id)
+                    except RuntimeError as exc:
+                        await ws.send_json({"type": "error", "message": str(exc)})
+                        continue
                     room.sockets.add(ws)
                     joined = True
                     await ws.send_json({"type": "joined", "room": room_id, "user_id": user_id, "channel": channel + 1})
@@ -258,12 +256,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--midi-port", type=str, default="IAC Driver Bus 1", help="MIDI output port name.")
     parser.add_argument("--http-host", type=str, default="0.0.0.0", help="HTTP bind host.")
     parser.add_argument("--http-port", type=int, default=8080, help="HTTP bind port.")
-    parser.add_argument(
-        "--channels",
-        type=str,
-        default="1,2,3,4,5,6,7,8",
-        help="Comma-separated default channels for auto-assignment (1..16).",
-    )
     parser.add_argument(
         "--user-channel",
         action="append",
@@ -299,7 +291,6 @@ def main() -> int:
             print(name)
         return 0
 
-    default_channels = parse_channel_list(args.channels)
     assignments = parse_user_channel_pairs(args.user_channel)
     mapping = MidiMapping(
         speed_cc=args.cc_speed,
@@ -312,7 +303,6 @@ def main() -> int:
     try:
         server = SessionServer(
             midi_port=args.midi_port,
-            default_channels=default_channels,
             explicit_assignments=assignments,
             mapping=mapping,
             debug_print_ms=args.debug_print_ms,
@@ -348,6 +338,7 @@ def main() -> int:
 
     print(f"Web session host: http://{args.http_host}:{args.http_port}")
     print(f"MIDI output: {args.midi_port}")
+    print("Per room: 1st new user -> MIDI channel 1, 2nd -> channel 2, ... (max 16); same user_id keeps channel.")
     print("Share links like:")
     print(f"  http://<HOST_IP>:{args.http_port}/?room=ensemble&user=alice")
     if args.debug_print_ms > 0:
